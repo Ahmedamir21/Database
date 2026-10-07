@@ -9,7 +9,8 @@
     "start": "node src/app.js",
     "dev": "node --watch src/app.js",
     "seed:admin": "node scripts/seedAdmin.js",
-    "test": "node --test"
+    "test": "node --test",
+    "check:deploy": "node scripts/checkDeploy.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -19,5 +20,8 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "mssql": "^11.0.1"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }

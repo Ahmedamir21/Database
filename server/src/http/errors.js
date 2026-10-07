@@ -35,6 +35,8 @@ export const conflict = (code, message, details) => new ApiError(409, code, mess
  * The message of a THROW is written for the student who sees it, so it is used as it is.
  */
 export function translateDatabaseError(error) {
+  // the API already said exactly what is wrong with a deployment: do not flatten it to 500
+  if (error?.code === 'database_not_configured') return error;
   const number = error?.number;
   const message = error?.message || 'The database refused the operation.';
 

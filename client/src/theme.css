@@ -1,0 +1,191 @@
+/**
+ * The look of Zewail Desk.
+ *
+ * The colours, the spacing and the radii are declared once, as design tokens. Every screen
+ * uses the tokens (through the small classes below or through Tailwind utilities), which is
+ * what keeps the interface consistent: one place decides what "a card" or "a table" is.
+ *
+ * Tailwind v4 reads the @theme block and turns every token into a utility, so
+ * var(--color-brand-600) is also available as bg-brand-600 / text-brand-600.
+ */
+@import 'tailwindcss';
+
+@theme {
+  /* Zewail City blue and gold, used for the identity of the portal */
+  --color-brand-50: #eef4fb;
+  --color-brand-100: #d7e6f6;
+  --color-brand-200: #b5cdec;
+  --color-brand-300: #86abdd;
+  --color-brand-400: #4f83c9;
+  --color-brand-500: #2b62ae;
+  --color-brand-600: #0b3a6b;
+  --color-brand-700: #0a3159;
+  --color-brand-800: #082646;
+  --color-brand-900: #061c34;
+  --color-gold-400: #f4c95d;
+  --color-gold-500: #e0ac33;
+  --color-gold-600: #b8860b;
+
+  --color-ink-50: #f7f8fa;
+  --color-ink-100: #eef0f4;
+  --color-ink-200: #dde1e8;
+  --color-ink-300: #c2c8d4;
+  --color-ink-400: #8d95a6;
+  --color-ink-500: #5d6577;
+  --color-ink-600: #3f4655;
+  --color-ink-700: #2b3140;
+  --color-ink-800: #1d2230;
+  --color-ink-900: #121722;
+
+  --color-ok-50: #eaf7ee;
+  --color-ok-500: #1f7a44;
+  --color-warn-50: #fdf4e3;
+  --color-warn-500: #a86a12;
+  --color-danger-50: #fdecec;
+  --color-danger-500: #a32020;
+
+  --font-sans: 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: Georgia, 'Times New Roman', serif;
+
+  --radius-card: 14px;
+  --shadow-card: 0 1px 2px rgb(18 23 34 / 6%), 0 8px 24px -12px rgb(18 23 34 / 22%);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink-50);
+  color: var(--color-ink-800);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .card {
+    background: white;
+    border: 1px solid var(--color-ink-200);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .card-pad {
+    padding: 1.15rem 1.25rem;
+  }
+
+  .label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--color-ink-500);
+    margin-bottom: 0.3rem;
+    text-transform: uppercase;
+  }
+
+  .input {
+    width: 100%;
+    border: 1px solid var(--color-ink-300);
+    border-radius: 9px;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.95rem;
+    background: white;
+    color: var(--color-ink-800);
+  }
+
+  .input:focus {
+    outline: 2px solid var(--color-brand-400);
+    outline-offset: 1px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 9px;
+    padding: 0.55rem 0.95rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-brand-600);
+    color: white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-brand-700);
+  }
+
+  .btn-ghost {
+    background: white;
+    border-color: var(--color-ink-300);
+    color: var(--color-ink-700);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-ink-100);
+  }
+
+  .btn-danger {
+    background: var(--color-danger-50);
+    border-color: #e7b7b7;
+    color: var(--color-danger-500);
+  }
+
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .table th {
+    text-align: left;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--color-ink-500);
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--color-ink-200);
+    white-space: nowrap;
+  }
+
+  .table td {
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--color-ink-100);
+    vertical-align: middle;
+  }
+
+  .table tbody tr:hover {
+    background: var(--color-ink-50);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+  .card { box-shadow: none; }
+}

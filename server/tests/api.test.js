@@ -36,8 +36,24 @@ async function call(method, url, body) {
   return { status: response.status, body: await response.json() };
 }
 
-test('the root of the server answers with the name of the API', async () => {
-  const { status, body } = await call('GET', '/');
+test('the root of the server answers, with the client when it is built and with the API index otherwise', async () => {
+  const response = await fetch(`${base}/`);
+  assert.equal(response.status, 200);
+  const type = response.headers.get('content-type') || '';
+  if (type.includes('application/json')) {
+    // no client/dist in this working tree: the root is the small index of the API
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.data.name, 'Zewail Desk API');
+  } else {
+    // client/dist exists: the root is the page of the application, served by this same server
+    const page = await response.text();
+    assert.match(page, /<div id="root"/);
+  }
+});
+
+test('the index of the API answers on /api whatever the client does', async () => {
+  const { status, body } = await call('GET', '/api');
   assert.equal(status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.data.name, 'Zewail Desk API');
@@ -94,8 +110,15 @@ test('the sign up of a student checks the input before the database is touched',
 test('the health endpoint answers in the shape of the API (the database may be down)', async () => {
   const { status, body } = await call('GET', '/api/meta/health');
   assert.ok([200, 503].includes(status));
-  if (status === 200) assert.equal(body.data.api, 'up');
-  else assert.equal(body.error.code, 'database_unreachable');
+  if (status === 200) {
+    assert.equal(body.data.api, 'up');
+    assert.equal(body.data.database, 'up');
+    assert.ok(body.data.connection.includes('@'), 'the connection is described without a password');
+  } else {
+    // 503 either because the deployment has no DB_* variables at all, or because the server
+    // that they point at does not answer; both say which one it is
+    assert.ok(['database_not_configured', 'database_unreachable'].includes(body.error.code));
+  }
 });
 
 test('a request that is far too large is refused', async () => {

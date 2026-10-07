@@ -41,7 +41,18 @@ export function errorHandler(error, req, res, next) {
   };
   if (error.details) body.error.details = error.details;
   if (status >= 500) {
-    console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ->`, error);
+    // An operational failure (a rule of the deployment, a database that is not there) is one
+    // line: the stack of a known problem would only bury the next real one. Anything else is
+    // a bug of this code, and then the whole error is worth printing.
+    const operational = ['database_not_configured', 'misconfigured_jwt_secret', 'cannot_open_database',
+      'database_unreachable', 'database_error', 'db_rule_', 'deadlock'].some(
+      (code) => String(error.code || '').startsWith(code),
+    );
+    if (operational) {
+      console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} -> ${status} ${error.code}: ${error.message}`);
+    } else {
+      console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ->`, error);
+    }
   }
   res.status(status).json(body);
 }

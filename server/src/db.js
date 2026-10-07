@@ -8,32 +8,108 @@
  * by the procedures and the trigger inside the database.
  */
 import sql from 'mssql';
-import { config } from './config.js';
+import { config, databaseEnvMissing } from './config.js';
+
+/**
+ * There is no SQL Server to talk to, because the environment does not describe one.
+ * The API never guesses a server: a deployment without DB_SERVER/DB_NAME/DB_USER/DB_PASSWORD
+ * says so (and names the variables) instead of trying "sa@localhost" for fifteen seconds.
+ */
+export class DatabaseNotConfiguredError extends Error {
+  constructor(missing) {
+    super(`The API has no SQL Server to talk to: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set in the environment.`);
+    this.name = 'DatabaseNotConfiguredError';
+    this.code = 'database_not_configured';
+    this.status = 503;                       // a deployment problem, not a server crash
+    this.details = { missing };
+    this.missing = missing;
+  }
+}
 
 let pool = null;
+let connecting = null;
+let keepAlive = null;
 
-/** open the pool once, reuse it for every request */
+/**
+ * Open the pool once, and reuse it for every request that this instance of the API answers.
+ *
+ * A serverless platform keeps a function instance alive after it answered, and sends the next
+ * request to the same instance, so the pool here is exactly what should be reused: the second
+ * request pays no connect. Two details make that safe:
+ *
+ *   * one connect at a time. Two requests that arrive together await the same promise.
+ *   * an 'error' listener on the pool. A connection that dies while nobody is looking would
+ *     otherwise be an uncaught exception, which on Vercel is reported as
+ *     FUNCTION_INVOCATION_FAILED with no useful message; here it clears the pool and the next
+ *     request opens a fresh one.
+ */
 export async function getPool() {
+  const missing = databaseEnvMissing();
+  if (missing.length) throw new DatabaseNotConfiguredError(missing);
   if (pool && pool.connected) return pool;
-  pool = await new sql.ConnectionPool({
-    server: config.db.server,
-    port: config.db.port,
-    database: config.db.database,
-    user: config.db.user,
-    password: config.db.password,
-    options: {
-      encrypt: config.db.encrypt,
-      trustServerCertificate: config.db.trustServerCertificate,
-      enableArithAbort: true,
-    },
-    pool: { max: config.db.poolMax, min: 0, idleTimeoutMillis: 30000 },
-    connectionTimeout: config.db.connectionTimeout,
-    requestTimeout: config.db.requestTimeout,
-  }).connect();
-  return pool;
+  if (connecting) return connecting;
+
+  connecting = (async () => {
+    const instance = new sql.ConnectionPool({
+      server: config.db.server,
+      port: config.db.port,
+      database: config.db.database,
+      user: config.db.user,
+      password: config.db.password,
+      options: {
+        encrypt: config.db.encrypt,
+        trustServerCertificate: config.db.trustServerCertificate,
+        enableArithAbort: true,
+      },
+      pool: { max: config.db.poolMax, min: 0, idleTimeoutMillis: 30000 },
+      connectionTimeout: config.db.connectionTimeout,
+      requestTimeout: config.db.requestTimeout,
+    });
+
+    instance.on('error', (error) => {
+      console.error(`[db] the connection pool reported an error: ${error.message}`);
+      if (pool === instance) pool = null;
+      Promise.resolve()
+        .then(() => instance.close())
+        .catch(() => { /* the pool is already gone */ });
+    });
+
+    const connected = await instance.connect();
+    pool = connected;
+    startKeepAlive();
+    return connected;
+  })();
+
+  try {
+    return await connecting;
+  } finally {
+    connecting = null;
+  }
+}
+
+/**
+ * Keep the pool from being suspended by an idle serverless platform.
+ *
+ * Off by default (DB_KEEP_ALIVE_SECONDS=0), because every interval costs one function call.
+ * When it is on, one very small query per interval holds the TCP connection to SQL Server
+ * open, so the first request after a quiet period does not wait for a new handshake.
+ */
+function startKeepAlive() {
+  const seconds = config.db.keepAliveSeconds;
+  if (!seconds || keepAlive) return;
+  keepAlive = setInterval(() => {
+    if (pool && pool.connected) {
+      pool.request().query('SELECT 1 AS Awake').catch(() => { /* the error listener will clean up */ });
+    }
+  }, seconds * 1000);
+  keepAlive.unref();               // a timer must never keep the process (or a test) alive
 }
 
 export async function closePool() {
+  if (keepAlive) {
+    clearInterval(keepAlive);
+    keepAlive = null;
+  }
   if (pool) {
     await pool.close();
     pool = null;

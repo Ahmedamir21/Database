@@ -2,7 +2,9 @@
 # Zewail Desk - CSAI 202 project
 # ---------------------------------------------------------------------------------------
 
-# Node modules and build output
+# Node modules, build output
+__pycache__/
+*.pyc
 node_modules/
 server/node_modules/
 client/node_modules/
