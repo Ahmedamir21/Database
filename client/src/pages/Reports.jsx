@@ -62,8 +62,23 @@ export default function Reports() {
     if (!key && reports.length) navigate(`/reports/${reports[0].key}`, { replace: true });
   }, [key, reports.length, navigate]);
 
-  // a new report starts with empty dropdowns
-  useEffect(() => { setValues({}); }, [current?.key]);
+  /**
+   * The dropdowns of a report start empty, except when a list has exactly one answer: a
+   * teacher may only run an "instructor" report about themself, and the API answers with a
+   * list that holds their own name alone, so the report may as well be ready to run.
+   * The effect depends on the report and on the loaded lists - never on the chosen values -
+   * so it runs once and cannot set itself off again.
+   */
+  useEffect(() => {
+    const start = {};
+    if (current) {
+      for (const param of current.params) {
+        const list = options.data?.[KINDS[param.kind]?.options] || [];
+        if (list.length === 1) start[param.name] = list[0].id;
+      }
+    }
+    setValues(start);
+  }, [current?.key, options.data]);
 
   const missing = current
     ? current.params.filter((param) => param.required && !values[param.name])
