@@ -876,10 +876,20 @@ BEGIN
         THROW 51040, 'An administrator already exists. Create further admins inside the application.', 1;
     END
 
+    DECLARE @UserId INT;
+
     INSERT INTO dbo.AppUser (FullName, Email, PasswordHash, Role, IsActive)
     VALUES (@FullName, @Email, @PasswordHash, 'Admin', 1);
 
-    SELECT CAST(SCOPE_IDENTITY() AS INT) AS UserId;
+    SET @UserId = CAST(SCOPE_IDENTITY() AS INT);
+
+    -- the Administrator is a sub entity of AppUser, so the first administrator also needs
+    -- the row of the subtype: without it the person could not record a payment later on,
+    -- because Payment.RecordedByAdminId points at dbo.Admin
+    INSERT INTO dbo.Admin (UserId, Position, CanRecordPayments)
+    VALUES (@UserId, 'System Administrator', 1);
+
+    SELECT @UserId AS UserId;
 END
 GO
 
