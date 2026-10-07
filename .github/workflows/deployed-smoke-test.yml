@@ -1,0 +1,242 @@
+# The deployment smoke test.
+#
+# A green Vercel build only means the platform was able to bundle the function; it says
+# nothing about what the deployed API answers. This job therefore finds the Vercel deployment
+# of the commit that was just pushed, sends it the requests a person would send, and publishes
+# what each one answered as a check run on the commit (and in the run summary) - so the result
+# is readable next to the commit, without opening a log.
+#
+# What the answers mean:
+#
+#   /api/meta/health  200  the API runs and SQL Server answered       -> the deployment works
+#                     503 database_not_configured  the DB_* variables are missing
+#                     503 database_unreachable     the variables are there, the server is not
+#   /api               200  the index of the API (the address the rewrite of vercel.json uses)
+#   /                  200  the same index, or the built client page when one is served
+#   /api/admin/users   401  a page of an office account still needs a session
+#   unknown path       404  an answer in the shape of the API - never a crash
+#   /api/auth/login    400/401/503  a refusal in the shape of the API
+#
+# A 401 html page instead means Vercel Deployment Protection is switched on for that
+# deployment; a plain 500 FUNCTION_INVOCATION_FAILED means the function threw before it could
+# answer. Both are reported as failures with the body of the answer, because both make the API
+# unusable for a client.
+name: deployed smoke test
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'A deployment URL to probe (empty = the newest deployment of the pushed commit)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  deployments: read
+  statuses: read
+  checks: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find the deployment of this commit
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.base_url }}" ]; then
+            echo "base=${{ inputs.base_url }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "looking for a Vercel deployment of $GITHUB_SHA ..."
+          for attempt in $(seq 1 20); do
+            id=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/deployments?sha=$GITHUB_SHA&per_page=1" \
+              | jq -r '.[0].id // empty')
+            if [ -n "$id" ]; then
+              url=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/deployments/$id/statuses" \
+                | jq -r '[.[] | select(.state == "success")][0].environment_url // empty')
+              if [ -n "$url" ]; then
+                echo "the deployment of this commit is $url"
+                echo "base=$url" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            sleep 15
+          done
+          echo "no successful deployment of $GITHUB_SHA was published within five minutes" >&2
+          exit 1
+
+      - name: Probe the deployed API
+        id: probe
+        env:
+          BASE: ${{ steps.find.outputs.base }}
+        run: |
+          set -uo pipefail
+          BASE="${BASE%/}"
+          echo "probing $BASE"
+          TABLE=$'| request | status | answer |\n| --- | --- | --- |\n'
+          FAILED=0
+          # a request path is written as code, a phrase about the deployment is not
+          add() { local label="$1"; case "$label" in /*) label="\`$label\`";; esac; TABLE+="| $label | $2 | $3 |"$'\n'; }
+
+          # 1. the health endpoint: it decides what the whole deployment can do
+          HEALTH=$(mktemp)
+          CODE=$(curl -sS -L -m 45 -o "$HEALTH" -w '%{http_code}' "$BASE/api/meta/health" || echo 000)
+          BODY=$(head -c 600 "$HEALTH" | tr -d '\r\n' | tr '|' '/')
+          if [ "$CODE" = "000" ]; then
+            echo "the deployment did not answer at all"; FAILED=1
+            add /api/meta/health "$CODE" "no answer at all"
+          elif ! jq -e . "$HEALTH" >/dev/null 2>&1; then
+            FAILED=1
+            add /api/meta/health "$CODE" "$(echo "$BODY" | head -c 200) - NOT JSON: a Vercel sign-in page means Deployment Protection, a plain 500 means the function threw"
+          else
+            OK=$(jq -r '.ok' "$HEALTH")
+            if [ "$OK" = "true" ]; then
+              add /api/meta/health "$CODE" "database UP - $(jq -c '.data | {connection, milliseconds, encrypted}' "$HEALTH")"
+            else
+              ERR=$(jq -r '.error.code' "$HEALTH")
+              case "$ERR" in
+                database_not_configured) add /api/meta/health "$CODE" "the API runs; missing $(jq -c '.error.details.missing' "$HEALTH")" ;;
+                database_unreachable)    add /api/meta/health "$CODE" "$(jq -r '.error.details.connection' "$HEALTH") did not answer" ;;
+                misconfigured_jwt_secret) add /api/meta/health "$CODE" "$ERR" ;;
+                *) add /api/meta/health "$CODE" "unexpected: $ERR"; FAILED=1 ;;
+              esac
+            fi
+          fi
+          echo "health: HTTP $CODE $(head -c 300 "$HEALTH")"
+
+          # 2. the addresses whose status code is fixed by the API itself
+          probe() {
+            local path="$1" want="$2"
+            local code
+            code=$(curl -sS -L -m 45 -o /dev/null -w '%{http_code}' "$BASE$path" || echo 000)
+            if [ "$code" = "$want" ]; then
+              add "$path" "$code" "as documented"
+            else
+              add "$path" "$code" "expected $want"; FAILED=1
+            fi
+            echo "$path -> $code (expected $want)"
+          }
+          probe /api 200
+          probe /api/admin/users 401
+          probe /api/there-is-nothing-here 404
+
+          # 3. the root: the index of the API, or the built client page
+          ROOT=$(curl -sS -L -m 45 -o /tmp/root.body -w '%{http_code}' "$BASE/" || echo 000)
+          if [ "$ROOT" = "200" ]; then
+            if head -c 40 /tmp/root.body | grep -q '"ok"'; then
+              add / 200 "the index of the API"
+            elif grep -q '<div id="root"' /tmp/root.body 2>/dev/null; then
+              add / 200 "the built client page"
+            else
+              add / 200 "something else - see the run log"; FAILED=1
+            fi
+          else
+            add / "$ROOT" "expected 200"; FAILED=1
+          fi
+          echo "/ -> $ROOT"
+
+          # 4. which revision answered, and where the production domain stands
+          WANT_COMMIT=$(echo "$GITHUB_SHA" | cut -c1-7)
+          DEPLOY_COMMIT=$(jq -r '(.data.deployment // .error.details.deployment // {}).commit // ""' "$HEALTH" 2>/dev/null)
+          if [ -z "$DEPLOY_COMMIT" ]; then
+            add "which revision answered" "-" "the deployment does not report its revision (it runs code older than this workflow)"; FAILED=1
+          elif [ "$DEPLOY_COMMIT" = "$WANT_COMMIT" ]; then
+            add "which revision answered" "$DEPLOY_COMMIT" "exactly the commit that was pushed"
+          else
+            add "which revision answered" "$DEPLOY_COMMIT" "expected $WANT_COMMIT"; FAILED=1
+          fi
+          echo "the deployment reports revision $DEPLOY_COMMIT (pushed: $WANT_COMMIT)"
+
+          PROD=$(jq -r '(.data.deployment // .error.details.deployment // {}).productionUrl // ""' "$HEALTH" 2>/dev/null)
+          if [ -n "$PROD" ]; then
+            if [ "https://$PROD" = "$BASE" ]; then
+              add "the production domain" "itself" "this deployment IS the production domain ($PROD)"
+            else
+              PROD_BODY=$(mktemp)
+              PROD_CODE=$(curl -sS -L -m 45 -o "$PROD_BODY" -w '%{http_code}' "https://$PROD/api/meta/health" || echo 000)
+              PROD_COMMIT=$(jq -r '(.data.deployment // .error.details.deployment // {}).commit // ""' "$PROD_BODY" 2>/dev/null)
+              PROD_STATE=$(jq -r 'if .ok then "the database is up" else (.error.code // "unknown") end' "$PROD_BODY" 2>/dev/null)
+              if [ "$PROD_COMMIT" = "$WANT_COMMIT" ]; then
+                add "the production domain ($PROD)" "$PROD_CODE" "runs this same commit; $PROD_STATE"
+              elif [ -n "$PROD_COMMIT" ]; then
+                add "the production domain ($PROD)" "$PROD_CODE" "still runs $PROD_COMMIT while this commit is $WANT_COMMIT - promote this deployment to move production forward"
+              else
+                add "the production domain ($PROD)" "$PROD_CODE" "$PROD_STATE"
+              fi
+              echo "the production domain $PROD -> HTTP $PROD_CODE, revision ${PROD_COMMIT:-unknown}, $PROD_STATE"
+            fi
+          fi
+
+          # 5. the client deployment, when the repository says where it is: a repository variable
+          #    called CLIENT_URL (Settings -> Secrets and variables -> Actions -> Variables)
+          if [ -n "${{ vars.CLIENT_URL }}" ]; then
+            CLIENT_BODY=$(mktemp)
+            CLIENT_CODE=$(curl -sS -L -m 45 -o "$CLIENT_BODY" -w '%{http_code}' "${{ vars.CLIENT_URL }}/" || echo 000)
+            if [ "$CLIENT_CODE" = "200" ] && grep -q '<div id="root"' "$CLIENT_BODY"; then
+              add "the client (${{ vars.CLIENT_URL }})" "$CLIENT_CODE" "the built client page is served"
+            else
+              add "the client (${{ vars.CLIENT_URL }})" "$CLIENT_CODE" "expected the built client page (200 with <div id=\"root\">)"; FAILED=1
+            fi
+            echo "the client ${{ vars.CLIENT_URL }} -> $CLIENT_CODE"
+          fi
+
+          # 6. a sign in attempt: refused, in the shape of the API
+          LOGIN_BODY=$(mktemp)
+          LOGIN=$(curl -sS -L -m 45 -H 'content-type: application/json' \
+            -d '{"email":"nobody@example.com","password":"neither-a-real-password"}' \
+            -o "$LOGIN_BODY" -w '%{http_code}' "$BASE/api/auth/login" || echo 000)
+          LOGIN_CODE=$(jq -r '.error.code // "no error code"' "$LOGIN_BODY" 2>/dev/null || echo 'not JSON')
+          case "$LOGIN" in
+            400|401|503) add /api/auth/login "$LOGIN" "refused: $LOGIN_CODE" ;;
+            *) add /api/auth/login "$LOGIN" "expected a refusal (400, 401 or 503), got $LOGIN_CODE"; FAILED=1 ;;
+          esac
+          echo "/api/auth/login -> $LOGIN ($LOGIN_CODE)"
+
+          {
+            echo "### Deployed API probe"
+            echo
+            echo "deployment: $BASE"
+            echo "commit: $GITHUB_SHA"
+            echo
+            printf '%s' "$TABLE"
+            if [ "$FAILED" != "0" ]; then
+              echo
+              echo "**At least one answer is not the documented one.**"
+            fi
+          } > /tmp/probe-summary.md
+          cat /tmp/probe-summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the result as a check run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          FAILED="${{ steps.probe.outputs.failed }}"
+          BASE="${{ steps.probe.outputs.base }}"
+          CONCLUSION=$([ "$FAILED" = "0" ] && echo success || echo failure)
+          if [ ! -f /tmp/probe-summary.md ]; then
+            printf 'the probe did not run: no deployment of %s was found\n' "$GITHUB_SHA" > /tmp/probe-summary.md
+            CONCLUSION=failure
+          fi
+          jq -n --arg name "deployed api probe" --arg sha "$GITHUB_SHA" \
+                --arg conclusion "$CONCLUSION" --arg base "$BASE" \
+                --rawfile summary /tmp/probe-summary.md \
+            '{name:$name, head_sha:$sha, status:"completed", conclusion:$conclusion,
+              output:{title:("deployed api probe " + $base), summary:$summary}}' > /tmp/check.json
+          gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" --input /tmp/check.json --jq '.html_url' \
+            || echo "the check run could not be published"
+
+      - name: Fail the job when an answer is not the documented one
+        if: steps.probe.outputs.failed != '0'
+        run: |
+          echo "the deployment is not answering as docs/DEPLOYMENT.md describes"; exit 1

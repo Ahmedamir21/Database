@@ -1,0 +1,27 @@
+{
+  "name": "zewail-desk-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Zewail Desk API - Express + mssql backend for the CSAI 202 project",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "seed:admin": "node scripts/seedAdmin.js",
+    "test": "node --test",
+    "check:deploy": "node scripts/checkDeploy.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mssql": "^11.0.1"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}
