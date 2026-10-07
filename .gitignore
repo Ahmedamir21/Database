@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------------------
+# Zewail Desk - CSAI 202 project
+# ---------------------------------------------------------------------------------------
+
+# Node modules and build output
+node_modules/
+server/node_modules/
+client/node_modules/
+client/dist/
+client/.vite/
+coverage/
+
+# Environment files: the real values never go into the repository, .env.example does
+.env
+.env.*
+!.env.example
+server/.env
+client/.env
+
+# Logs and operating system files
+*.log
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# Database backups (they are handed in separately, they are far too big for git)
+*.bak
+*.bak.log
+*.mdf
+*.ldf
+
+# ---------------------------------------------------------------------------------------
+# The older prototype that is still in this working tree (a Flask version of the same
+# course project, made before Zewail Desk). It is deliberately NOT part of the deliverable
+# so that the handed-in project is only the Node/Express + React application in server/,
+# client/ and database/. Remove these lines if that prototype should be committed too.
+# ---------------------------------------------------------------------------------------
+/app/
+/build/
+/sample_data/
+/sql/
+/tests/
+/tools/
+/run.py
