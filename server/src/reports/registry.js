@@ -29,6 +29,7 @@ const SEMESTER_PARAM = {
 };
 const STUDENT_PARAM = { name: 'StudentId', label: 'Student', kind: 'student', required: true };
 const SECTION_PARAM = { name: 'SectionId', label: 'Section', kind: 'section', required: true };
+const INSTRUCTOR_PARAM = { name: 'InstructorId', label: 'Instructor', kind: 'instructor', required: true };
 
 export const REPORTS = {
   /* ---------------------------------------------------------------- statistical */
@@ -62,13 +63,14 @@ ORDER BY    p.Name;`,
     category: 'Statistical',
     description: 'How many students got each letter of the grade scale, with the average and the pass rate.',
     params: [],
-    labels: { AMinus: 'A-', BPlus: 'B+', BMinus: 'B-', CPlus: 'C+', CMinus: 'C-', DPlus: 'D+', PassRate: 'Pass rate %' },
+    labels: { CourseTitle: 'Course', AverageScore: 'Average', AMinus: 'A-', BPlus: 'B+', BMinus: 'B-', CPlus: 'C+', CMinus: 'C-', DPlus: 'D+', PassRate: 'Pass rate %' },
     sql: `
 SELECT  sem.Name                                                     AS SemesterName,
         c.Code                                                       AS CourseCode,
+        c.Title                                                      AS CourseTitle,
         sec.SectionCode,
         COUNT(*)                                                     AS Graded,
-        CAST(AVG(e.Score) AS DECIMAL(5,2))                            AS Average,
+        CAST(AVG(e.Score) AS DECIMAL(5,2))                            AS AverageScore,
         SUM(CASE WHEN e.LetterGrade = 'A'  THEN 1 ELSE 0 END)        AS A,
         SUM(CASE WHEN e.LetterGrade = 'A-' THEN 1 ELSE 0 END)        AS AMinus,
         SUM(CASE WHEN e.LetterGrade = 'B+' THEN 1 ELSE 0 END)        AS BPlus,
@@ -88,7 +90,7 @@ JOIN        dbo.Semester sem ON sem.SemesterId = sec.SemesterId
 JOIN        dbo.Course   c   ON c.CourseId    = sec.CourseId
 WHERE       e.GradePublished = 1
   AND       e.Status <> 'Dropped'
-GROUP BY    sem.Name, c.Code, sec.SectionCode
+GROUP BY    sem.Name, c.Code, c.Title, sec.SectionCode
 ORDER BY    sem.Name DESC, c.Code, sec.SectionCode;`,
   },
 
@@ -355,7 +357,8 @@ SELECT  p.PaymentId, p.PaidAt, p.ReceiptNumber, p.Method,
 FROM        dbo.Payment  p
 JOIN        dbo.Student  st  ON st.UserId = p.StudentId
 JOIN        dbo.AppUser  u   ON u.UserId  = st.UserId
-JOIN        dbo.AppUser  adm ON adm.UserId = p.RecordedByAdminId
+JOIN        dbo.Admin    a   ON a.UserId   = p.RecordedByAdminId
+JOIN        dbo.AppUser  adm ON adm.UserId = a.UserId
 WHERE       p.SemesterId = @SemesterId
 ORDER BY    p.PaidAt, p.PaymentId;`,
   },
@@ -526,6 +529,31 @@ ORDER BY    an.IsPinned DESC, an.PostedAt DESC;`,
   },
 
   /* ---------------------------------------------------------------- managerial */
+  'R2.10': {
+    number: 'R2.10',
+    title: 'The sections of one instructor',
+    category: 'Detailed',
+    description: 'The sections of one teacher with the class average, so the two groups of the same course can be compared against each other.',
+    params: [INSTRUCTOR_PARAM],
+    labels: { Registered: 'Students', AverageScore: 'Average', Lowest: 'Lowest score', Highest: 'Highest score' },
+    sql: `
+SELECT  sem.Name                                                     AS SemesterName,
+        c.Code                                                       AS CourseCode,
+        sec.SectionCode, sec.Capacity,
+        COUNT(e.EnrollmentId)                                        AS Registered,
+        CAST(AVG(CASE WHEN e.GradePublished = 1 THEN e.Score END)
+             AS DECIMAL(5,2))                                        AS AverageScore,
+        MIN(CASE WHEN e.GradePublished = 1 THEN e.Score END)         AS Lowest,
+        MAX(CASE WHEN e.GradePublished = 1 THEN e.Score END)         AS Highest
+FROM        dbo.Section sec
+JOIN        dbo.Course  c   ON c.CourseId    = sec.CourseId
+JOIN        dbo.Semester sem ON sem.SemesterId = sec.SemesterId
+LEFT JOIN   dbo.Enrollment e ON e.SectionId = sec.SectionId AND e.Status <> 'Dropped'
+WHERE       sec.InstructorId = @InstructorId
+GROUP BY    sem.Name, sem.StartDate, c.Code, sec.SectionCode, sec.Capacity
+ORDER BY    sem.StartDate DESC, c.Code;`,
+  },
+
   'R3.1': {
     number: 'R3.1',
     title: 'The numbers of the term',

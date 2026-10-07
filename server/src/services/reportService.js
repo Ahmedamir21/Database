@@ -16,21 +16,11 @@ import { REPORTS, categoryOf, getReport, listReports } from '../reports/registry
  * teaching are also for an instructor, and then only about the instructor's own sections.
  */
 export const REPORT_ROLES = {
-  'R1.2': ['Admin', 'Instructor'],
-  'R1.3': ['Admin', 'Instructor'],
-  'R1.4': ['Admin', 'Instructor'],
-  'R1.7': ['Admin', 'Instructor'],
-  'R1.8': ['Admin', 'Instructor'],
+  // a teacher only runs the reports about their own teaching; a section parameter is proved
+  // to be one of their sections in resolveParams, and an instructor parameter is always
+  // replaced by the caller. Everything else is for the student office.
   'R2.2': ['Admin', 'Instructor'],
-  'R2.6': ['Admin', 'Instructor'],
-  'R2.7': ['Admin', 'Instructor'],
-  'R2.8': ['Admin', 'Instructor'],
-  'R2.9': ['Admin', 'Instructor'],
-  'R3.1': ['Admin', 'Instructor'],
-  'R3.2': ['Admin', 'Instructor'],
-  'R3.4': ['Admin', 'Instructor'],
-  'R3.5': ['Admin', 'Instructor'],
-  'R3.8': ['Admin', 'Instructor'],
+  'R2.10': ['Admin', 'Instructor'],
 };
 
 export function rolesFor(key) {
@@ -72,6 +62,13 @@ async function resolveParams(report, raw, caller) {
       throw badRequest('bad_parameter', `${param.label} is not a valid identifier.`);
     }
     values[param.name] = id;
+  }
+
+  // a teacher may only look at a report about themself: the value is not taken from the query
+  if (caller?.role === 'Instructor') {
+    for (const param of report.params) {
+      if (param.kind === 'instructor') values[param.name] = caller.userId;
+    }
   }
 
   // an instructor may only look at their own sections
@@ -126,11 +123,22 @@ export async function runReport(key, rawParams, caller) {
   };
 }
 
+/**
+ * What the report page needs to draw its list: the key, the title, the sentence and the
+ * parameters of every report this role may run. The SQL text STAYS ON THE SERVER - it is not
+ * part of this answer, so the client can never replay or modify a statement.
+ */
 export function catalogue(role) {
-  const reports = reportsFor(role);
+  const reports = reportsFor(role).map((report) => ({
+    key: report.number,
+    title: report.title,
+    category: report.category,
+    description: report.description,
+    params: report.params,
+  }));
   return {
     reports,
-    categories: [...new Set(reports.map((report) => categoryOf(report.key)))],
+    categories: [...new Set(reports.map((report) => report.category))],
   };
 }
 

@@ -54,10 +54,12 @@ export async function myCourses(studentId, semesterId) {
 }
 
 export async function catalogue(studentId, filters = {}) {
-  const term = filters.termId
+  // the route names the filter semesterId, an internal caller may name it termId: accept both
+  const wantedTerm = filters.termId || filters.semesterId || null;
+  const term = wantedTerm
     ? await queryOne(
       `SELECT SemesterId, Name, StartDate, EndDate, RegistrationOpen, RegistrationDeadline, DropDeadline
-         FROM dbo.Semester WHERE SemesterId = @SemesterId`, { SemesterId: parseId(filters.termId, 'Semester') },
+         FROM dbo.Semester WHERE SemesterId = @SemesterId`, { SemesterId: parseId(wantedTerm, 'Semester') },
     )
     : await currentSemester();
   if (!term) throw notFound('There is no semester to show.', 'no_semester');

@@ -75,7 +75,7 @@ GO
 
 /* R1.3 How full the sections of a semester are, using the view that counts the enrolments.
    The CASE turns the percentage into the word the office uses. */
-DECLARE @SemesterName NVARCHAR(60) = 'Fall 2026';
+DECLARE @SemesterId INT = 3;   -- Fall 2026, the open term
 SELECT  f.CourseCode, f.CourseTitle, f.SectionCode, f.InstructorName, f.RoomName,
         f.Capacity, f.Enrolled, f.FillPercent,
         CASE WHEN f.FillPercent >= 100 THEN 'Full'
@@ -83,7 +83,7 @@ SELECT  f.CourseCode, f.CourseTitle, f.SectionCode, f.InstructorName, f.RoomName
              WHEN f.FillPercent >= 50  THEN 'Half'
              ELSE 'Plenty of seats' END                              AS FillBand
 FROM    dbo.vw_SectionFill f
-WHERE   f.SemesterName = @SemesterName
+WHERE   f.SemesterId = @SemesterId
 ORDER BY f.FillPercent DESC, f.CourseCode;
 GO
 

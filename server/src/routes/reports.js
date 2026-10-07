@@ -8,7 +8,7 @@
 import { Router } from 'express';
 import * as reportService from '../services/reportService.js';
 import * as SQL from '../sql/statements.js';
-import { query } from '../db.js';
+import { query, queryOne } from '../db.js';
 import { ok, route } from '../http/respond.js';
 import { requireRole } from '../middleware/auth.js';
 
@@ -27,8 +27,16 @@ reportsRouter.get('/options', route(async (req, res) => {
     ? await query(SQL.C1_MY_SECTIONS, { InstructorId: req.user.userId, SemesterId: null })
     : await query(SQL.D4_SECTION_FILL, { SemesterId: null });
   const students = req.user.role === 'Admin' ? await query(SQL.D31_STUDENT_OPTIONS) : [];
+  // a teacher always runs an "instructor" report about themself, so the list is their own name
+  const instructors = req.user.role === 'Admin'
+    ? await query(SQL.D7_INSTRUCTOR_OPTIONS, { OnlyActive: 1 })
+    : [await queryOne(SQL.D30_INSTRUCTOR_BY_ID, { UserId: req.user.userId })].filter(Boolean);
   return ok(res, {
     semesters: semesters.map((row) => ({ id: row.SemesterId, label: row.Name })),
+    instructors: instructors.map((row) => ({
+      id: row.UserId,
+      label: `${row.Title || ''} ${row.FullName} (${row.DepartmentCode || ''})`.trim(),
+    })),
     sections: sections.map((row) => ({
       id: row.SectionId,
       label: `${row.CourseCode} ${row.SectionCode} — ${row.SemesterName}`,

@@ -91,7 +91,7 @@ test('the reports of the SQL file and of the server have the same numbers', () =
 });
 
 test('the report parameters name a real kind of input for the client', () => {
-  const kinds = new Set(['semester', 'student', 'section']);
+  const kinds = new Set(['semester', 'student', 'section', 'instructor']);
   for (const report of Object.values(REPORTS)) {
     for (const param of report.params) {
       assert.ok(kinds.has(param.kind), `${report.number}: unknown parameter kind ${param.kind}`);
