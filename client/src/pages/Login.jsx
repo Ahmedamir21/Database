@@ -33,7 +33,13 @@ export default function Login() {
   }, [user, navigate]);
 
   useEffect(() => {
-    api.health().then(setHealth).catch((requestError) => setHealth({ error: requestError.message }));
+    api.health()
+      .then(setHealth)
+      .catch((requestError) => setHealth({
+        error: requestError.message,
+        code: requestError.code,
+        details: requestError.details,
+      }));
     api.summary().then(setSummary).catch(() => setSummary(null));
   }, []);
 
@@ -79,16 +85,33 @@ export default function Login() {
             )}
           </div>
 
-          <div className="mt-4 flex items-center gap-2 text-[0.82rem]">
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-[0.82rem]">
             {health && !health.error && (
               <>
                 <Badge tone={health.database === 'up' ? 'success' : 'warn'}>
                   API: {health.database === 'up' ? 'SQL Server connected' : health.database}
                 </Badge>
                 <span className="text-ink-500">{health.connection}</span>
+                {health.deployment?.commit && (
+                  <span className="text-ink-400">build {health.deployment.commit}</span>
+                )}
               </>
             )}
-            {health?.error && <Badge tone="danger">{health.error}</Badge>}
+            {health?.error && (
+              <>
+                <Badge tone="danger">{health.error}</Badge>
+                {(health.details?.missing?.length > 0 || health.details?.connection) && (
+                  <span className="text-ink-500">
+                    {health.details.missing?.length
+                      ? `missing in the deployment: ${health.details.missing.join(', ')}`
+                      : health.details.connection}
+                  </span>
+                )}
+                {health.details?.deployment?.commit && (
+                  <span className="text-ink-400">build {health.details.deployment.commit}</span>
+                )}
+              </>
+            )}
           </div>
         </div>
       </section>

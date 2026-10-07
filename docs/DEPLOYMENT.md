@@ -218,6 +218,31 @@ curl -sS https://<your-project>.vercel.app/api/meta/health | python3 -m json.too
 | `503` `{"error":{"code":"misconfigured_jwt_secret"}}` on sign in | `JWT_SECRET` is missing, short or still the example | set a 32+ character random value |
 | `500` `FUNCTION_INVOCATION_FAILED` (plain text, not JSON) | the function threw before the API could answer | `npx vercel logs <deployment-url>` or the dashboard: *Deployments → Functions → Logs* |
 
+### Which revision is answering
+
+Every answer of the API carries the facts of the deployment it came from, so a URL can be asked
+which commit it runs - no dashboard needed:
+
+```bash
+curl -sS https://<your-project>.vercel.app/api/meta/health | python3 -m json.tool
+```
+
+```json
+{
+  "api": "up", "database": "up", "environment": "production", "platform": "vercel",
+  "deployment": {
+    "commit": "9748c99", "ref": "arena/22c722ca-database", "environment": "production",
+    "url": "database-abc123.vercel.app", "productionUrl": "database-ahmedamir21.vercel.app"
+  }
+}
+```
+
+`deployment.commit` is the revision that answered, `deployment.productionUrl` is the domain the
+project calls its production one. The push-time probe (`.github/workflows/deployed-smoke-test.yml`)
+checks both: it fails when the deployment does not run the commit that was pushed, and it reports
+where the production domain stands - which is how a production that is still on an older commit
+becomes visible instead of being assumed.
+
 Local check, without SQL Server and without Vercel:
 
 ```bash
@@ -246,6 +271,10 @@ pages should live on their own domain:
 3. In the **API** project, add the client's address to `CLIENT_ORIGIN` and set
    `COOKIE_SAMESITE=none` (the session cookie is `Secure`, which browsers demand together with
    `None`). Without `none`, the sign in succeeds and the next page looks signed out.
+
+If the client is deployed, tell the deployment probe where it is: *Settings → Secrets and
+variables → Actions → Variables → New repository variable*, name `CLIENT_URL`, value the client
+address. The probe then checks that the client page is served as well.
 
 `VITE_API_MODE=mock` builds the client against the sample data inside the browser
 (`client/src/mock/`), which needs no API and no database at all: useful for a demonstration or

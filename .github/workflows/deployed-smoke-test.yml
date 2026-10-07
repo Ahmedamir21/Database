@@ -82,7 +82,8 @@ jobs:
           echo "probing $BASE"
           TABLE=$'| request | status | answer |\n| --- | --- | --- |\n'
           FAILED=0
-          add() { TABLE+="| \`$1\` | $2 | $3 |"$'\n'; }
+          # a request path is written as code, a phrase about the deployment is not
+          add() { local label="$1"; case "$label" in /*) label="\`$label\`";; esac; TABLE+="| $label | $2 | $3 |"$'\n'; }
 
           # 1. the health endpoint: it decides what the whole deployment can do
           HEALTH=$(mktemp)
@@ -141,7 +142,52 @@ jobs:
           fi
           echo "/ -> $ROOT"
 
-          # 4. a sign in attempt: refused, in the shape of the API
+          # 4. which revision answered, and where the production domain stands
+          WANT_COMMIT=$(echo "$GITHUB_SHA" | cut -c1-7)
+          DEPLOY_COMMIT=$(jq -r '(.data.deployment // .error.details.deployment // {}).commit // ""' "$HEALTH" 2>/dev/null)
+          if [ -z "$DEPLOY_COMMIT" ]; then
+            add "which revision answered" "-" "the deployment does not report its revision (it runs code older than this workflow)"; FAILED=1
+          elif [ "$DEPLOY_COMMIT" = "$WANT_COMMIT" ]; then
+            add "which revision answered" "$DEPLOY_COMMIT" "exactly the commit that was pushed"
+          else
+            add "which revision answered" "$DEPLOY_COMMIT" "expected $WANT_COMMIT"; FAILED=1
+          fi
+          echo "the deployment reports revision $DEPLOY_COMMIT (pushed: $WANT_COMMIT)"
+
+          PROD=$(jq -r '(.data.deployment // .error.details.deployment // {}).productionUrl // ""' "$HEALTH" 2>/dev/null)
+          if [ -n "$PROD" ]; then
+            if [ "https://$PROD" = "$BASE" ]; then
+              add "the production domain" "itself" "this deployment IS the production domain ($PROD)"
+            else
+              PROD_BODY=$(mktemp)
+              PROD_CODE=$(curl -sS -L -m 45 -o "$PROD_BODY" -w '%{http_code}' "https://$PROD/api/meta/health" || echo 000)
+              PROD_COMMIT=$(jq -r '(.data.deployment // .error.details.deployment // {}).commit // ""' "$PROD_BODY" 2>/dev/null)
+              PROD_STATE=$(jq -r 'if .ok then "the database is up" else (.error.code // "unknown") end' "$PROD_BODY" 2>/dev/null)
+              if [ "$PROD_COMMIT" = "$WANT_COMMIT" ]; then
+                add "the production domain ($PROD)" "$PROD_CODE" "runs this same commit; $PROD_STATE"
+              elif [ -n "$PROD_COMMIT" ]; then
+                add "the production domain ($PROD)" "$PROD_CODE" "still runs $PROD_COMMIT while this commit is $WANT_COMMIT - promote this deployment to move production forward"
+              else
+                add "the production domain ($PROD)" "$PROD_CODE" "$PROD_STATE"
+              fi
+              echo "the production domain $PROD -> HTTP $PROD_CODE, revision ${PROD_COMMIT:-unknown}, $PROD_STATE"
+            fi
+          fi
+
+          # 5. the client deployment, when the repository says where it is: a repository variable
+          #    called CLIENT_URL (Settings -> Secrets and variables -> Actions -> Variables)
+          if [ -n "${{ vars.CLIENT_URL }}" ]; then
+            CLIENT_BODY=$(mktemp)
+            CLIENT_CODE=$(curl -sS -L -m 45 -o "$CLIENT_BODY" -w '%{http_code}' "${{ vars.CLIENT_URL }}/" || echo 000)
+            if [ "$CLIENT_CODE" = "200" ] && grep -q '<div id="root"' "$CLIENT_BODY"; then
+              add "the client (${{ vars.CLIENT_URL }})" "$CLIENT_CODE" "the built client page is served"
+            else
+              add "the client (${{ vars.CLIENT_URL }})" "$CLIENT_CODE" "expected the built client page (200 with <div id=\"root\">)"; FAILED=1
+            fi
+            echo "the client ${{ vars.CLIENT_URL }} -> $CLIENT_CODE"
+          fi
+
+          # 6. a sign in attempt: refused, in the shape of the API
           LOGIN_BODY=$(mktemp)
           LOGIN=$(curl -sS -L -m 45 -H 'content-type: application/json' \
             -d '{"email":"nobody@example.com","password":"neither-a-real-password"}' \

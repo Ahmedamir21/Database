@@ -22,6 +22,11 @@ import path from 'node:path';
 process.env.DOTENV_CONFIG_PATH = path.join(os.tmpdir(), 'zewail-desk-no-dotenv');
 process.env.NODE_ENV = 'test';
 process.env.VERCEL = '1';                       // every Vercel deployment sets this
+process.env.VERCEL_ENV = 'production';
+process.env.VERCEL_URL = 'zewail-desk-abc123.vercel.app';
+process.env.VERCEL_PROJECT_PRODUCTION_URL = 'zewail-desk.vercel.app';
+process.env.VERCEL_GIT_COMMIT_SHA = '0123456789abcdef0123456789abcdef01234567';
+process.env.VERCEL_GIT_COMMIT_REF = 'arena/22c722ca-database';
 process.env.CLIENT_ORIGIN = 'https://zewail-desk.vercel.app';
 delete process.env.JWT_SECRET;
 delete process.env.DB_SERVER;
@@ -68,6 +73,19 @@ test('the address Vercel rewrites every request to answers with the index of the
   assert.equal(body.data.name, 'Zewail Desk API');
   assert.equal(body.data.database, 'not configured', 'a deployment never guesses a server');
   assert.ok(body.data.warnings.some((line) => line.includes('DB_SERVER')));
+});
+
+test('the API says which revision it is running, so a stale deployment is visible', async () => {
+  const index = await call('GET', '/api');
+  assert.deepEqual(index.body.data.deployment, {
+    commit: '0123456',
+    ref: 'arena/22c722ca-database',
+    environment: 'production',
+    url: 'zewail-desk-abc123.vercel.app',
+    productionUrl: 'zewail-desk.vercel.app',
+  });
+  const health = await call('GET', '/api/meta/health');
+  assert.equal(health.body.error.details.deployment.commit, '0123456');
 });
 
 test('the root of the domain never crashes, whatever it serves', async () => {

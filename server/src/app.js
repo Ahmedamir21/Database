@@ -21,7 +21,8 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import {
-  config, projectRoot, configWarnings, describeDatabase, jwtSecretProblem, allowedOrigins,
+  config, projectRoot, configWarnings, deploymentFacts, describeDatabase, jwtSecretProblem,
+  allowedOrigins,
 } from './config.js';
 import { ApiError } from './http/errors.js';
 import { attachUser } from './middleware/auth.js';
@@ -122,6 +123,7 @@ export function createApp() {
       name: 'Zewail Desk API',
       environment: config.env,
       platform: config.platform,
+      deployment: deploymentFacts(),
       database: describeDatabase() || 'not configured',
       client: hasClient ? 'the built client is served by this server' : 'client/ (Vite) or a separate deployment',
       endpoints: ['/api/meta/health', '/api/meta/summary', '/api/auth/login'],

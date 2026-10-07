@@ -16,7 +16,7 @@ import { query, queryOne, DatabaseNotConfiguredError } from '../db.js';
 import { ok, route } from '../http/respond.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
-  config, configWarnings, databaseEnvMissing, describeDatabase,
+  config, configWarnings, databaseEnvMissing, deploymentFacts, describeDatabase,
 } from '../config.js';
 import { reportCount } from '../services/reportService.js';
 
@@ -35,6 +35,7 @@ metaRouter.get('/health', route(async (req, res) => {
     api: 'up',
     environment: config.env,
     platform: config.platform,
+    deployment: deploymentFacts(),
     runtime: `node ${process.versions.node}`,
     warnings: configWarnings(),
   };

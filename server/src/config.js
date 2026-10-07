@@ -119,6 +119,20 @@ export const config = {
     cookieDomain: text(process.env.COOKIE_DOMAIN) || undefined,
   },
 
+  // what the platform says about this deployment. Vercel sets all of it, so any deployment
+  // can be asked which revision it is running - see deploymentFacts() and /api/meta/health.
+  deployment: {
+    url: text(process.env.VERCEL_URL),
+    branchUrl: text(process.env.VERCEL_BRANCH_URL),
+    productionUrl: text(process.env.VERCEL_PROJECT_PRODUCTION_URL),
+    environment: text(process.env.VERCEL_ENV),
+    commit: text(process.env.VERCEL_GIT_COMMIT_SHA),
+    ref: text(process.env.VERCEL_GIT_COMMIT_REF),
+    repo: text(process.env.VERCEL_GIT_REPO_SLUG)
+      ? `${text(process.env.VERCEL_GIT_REPO_OWNER) || ''}/${text(process.env.VERCEL_GIT_REPO_SLUG)}`
+      : null,
+  },
+
   // the first address of allowedOrigins, kept for the start up log and for older callers
   clientOrigin: allowedOrigins[0] || 'http://localhost:5173',
 
@@ -197,6 +211,21 @@ function crossSiteClientWarning() {
 
 export function assertConfigForStartup() {
   return configWarnings();
+}
+
+/**
+ * The facts of the deployment, without the empty ones: which revision is running, on which
+ * branch, in which environment, and which address the project calls its production domain.
+ * /api/meta/health and the index of the API answer with this, so a probe (or a person with a
+ * browser) can tell a deployment built from the right commit from a stale one - without any
+ * access to the Vercel dashboard.
+ */
+export function deploymentFacts() {
+  const { commit, ref, environment, url, productionUrl, branchUrl, repo } = config.deployment;
+  const short = commit ? commit.slice(0, 7) : null;
+  return Object.fromEntries(Object.entries({
+    commit: short, ref, environment, url, productionUrl, branchUrl, repo,
+  }).filter(([, value]) => value));
 }
 
 /** a short description of the connection for the health endpoint, without the password */
