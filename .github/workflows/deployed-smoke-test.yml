@@ -142,14 +142,16 @@ jobs:
           echo "/ -> $ROOT"
 
           # 4. a sign in attempt: refused, in the shape of the API
+          LOGIN_BODY=$(mktemp)
           LOGIN=$(curl -sS -L -m 45 -H 'content-type: application/json' \
             -d '{"email":"nobody@example.com","password":"neither-a-real-password"}' \
-            -o /dev/null -w '%{http_code}' "$BASE/api/auth/login" || echo 000)
+            -o "$LOGIN_BODY" -w '%{http_code}' "$BASE/api/auth/login" || echo 000)
+          LOGIN_CODE=$(jq -r '.error.code // "no error code"' "$LOGIN_BODY" 2>/dev/null || echo 'not JSON')
           case "$LOGIN" in
-            400|401|503) add /api/auth/login "$LOGIN" "refused in the shape of the API" ;;
-            *) add /api/auth/login "$LOGIN" "expected a refusal (400, 401 or 503)"; FAILED=1 ;;
+            400|401|503) add /api/auth/login "$LOGIN" "refused: $LOGIN_CODE" ;;
+            *) add /api/auth/login "$LOGIN" "expected a refusal (400, 401 or 503), got $LOGIN_CODE"; FAILED=1 ;;
           esac
-          echo "/api/auth/login -> $LOGIN"
+          echo "/api/auth/login -> $LOGIN ($LOGIN_CODE)"
 
           {
             echo "### Deployed API probe"

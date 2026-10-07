@@ -142,6 +142,17 @@ one function call per interval, so it is off by default.
    (`arena/22c722ca-database` while it is under review). *Settings → Git → Production Branch*
    decides which branch the production domain follows.
 
+**Every push is a Preview deployment.** A push to a branch that is not the Production Branch
+builds and runs, but only the production domain follows the production branch. To put the
+current commit on the production domain, either set *Settings → Git → Production Branch* to
+`arena/22c722ca-database` for the review and back to `main` after the merge, or promote this
+one deployment by hand: *Deployments → the deployment → ⋯ → Promote to Production*.
+
+Whoever probes the result does not have to be a person with a browser: every push runs the
+**deployed smoke test** (`.github/workflows/deployed-smoke-test.yml`), which finds the
+deployment of the commit, sends it the requests of section 3, and publishes the answers as the
+check run *deployed api probe* on the commit.
+
 ### 2.2 From a machine with the Vercel CLI
 
 ```bash

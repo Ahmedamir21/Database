@@ -66,6 +66,10 @@ npm test              # 40 tests, no SQL Server needed
 npm run check:deploy  # starts the file Vercel runs, in two deployment scenarios
 ```
 
+Every push also runs the **deployed smoke test**: GitHub finds the Vercel deployment of that
+commit, sends it real HTTP requests and publishes what each one answered as the check run
+*deployed api probe* (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+
 ## Deploying
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In one paragraph: the API is a Vercel project
