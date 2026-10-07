@@ -2,19 +2,25 @@
 #
 # A green Vercel build only means the platform was able to bundle the function; it says
 # nothing about what the deployed API answers. This job therefore finds the Vercel deployment
-# of the commit that was just pushed, and sends it real HTTP requests from a GitHub runner -
-# the same requests anybody else would send - and prints the status and the body of each one.
+# of the commit that was just pushed, sends it the requests a person would send, and publishes
+# what each one answered as a check run on the commit (and in the run summary) - so the result
+# is readable next to the commit, without opening a log.
 #
-# What it proves, and what it says when something is missing:
+# What the answers mean:
 #
-#   /api/meta/health  200 database up            the API runs and SQL Server answered
-#                     503 database_not_configured  the API runs, the DB_* variables are missing
+#   /api/meta/health  200  the API runs and SQL Server answered       -> the deployment works
+#                     503 database_not_configured  the DB_* variables are missing
 #                     503 database_unreachable     the variables are there, the server is not
-#   /                 200 the index of the API (or the built client when one is served)
-#   /api/auth/login   503 misconfigured_jwt_secret  JWT_SECRET is not set yet
-#   an unknown path   404 the answer shape of the API - never a crash
-#   a Vercel sign in page (401 html) means Deployment Protection is on for this deployment,
-#   and a plain 500 FUNCTION_INVOCATION_FAILED means the function threw before it answered.
+#   /api               200  the index of the API (the address the rewrite of vercel.json uses)
+#   /                  200  the same index, or the built client page when one is served
+#   /api/admin/users   401  a page of an office account still needs a session
+#   unknown path       404  an answer in the shape of the API - never a crash
+#   /api/auth/login    400/401/503  a refusal in the shape of the API
+#
+# A 401 html page instead means Vercel Deployment Protection is switched on for that
+# deployment; a plain 500 FUNCTION_INVOCATION_FAILED means the function threw before it could
+# answer. Both are reported as failures with the body of the answer, because both make the API
+# unusable for a client.
 name: deployed smoke test
 
 on:
@@ -22,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       base_url:
-        description: 'A deployment URL to probe (leave empty to use the newest one of the pushed commit)'
+        description: 'A deployment URL to probe (empty = the newest deployment of the pushed commit)'
         required: false
         default: ''
 
@@ -30,6 +36,7 @@ permissions:
   contents: read
   deployments: read
   statuses: read
+  checks: write
 
 jobs:
   probe:
@@ -47,9 +54,9 @@ jobs:
           fi
           echo "looking for a Vercel deployment of $GITHUB_SHA ..."
           for attempt in $(seq 1 20); do
-            state=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/deployments?sha=$GITHUB_SHA&per_page=1")
-            id=$(echo "$state" | jq -r '.[0].id // empty')
+            id=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/deployments?sha=$GITHUB_SHA&per_page=1" \
+              | jq -r '.[0].id // empty')
             if [ -n "$id" ]; then
               url=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
                 "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/deployments/$id/statuses" \
@@ -66,85 +73,122 @@ jobs:
           exit 1
 
       - name: Probe the deployed API
+        id: probe
         env:
           BASE: ${{ steps.find.outputs.base }}
         run: |
           set -uo pipefail
           BASE="${BASE%/}"
           echo "probing $BASE"
-          report=""
+          TABLE=$'| request | status | answer |\n| --- | --- | --- |\n'
+          FAILED=0
+          add() { TABLE+="| \`$1\` | $2 | $3 |"$'\n'; }
+
+          # 1. the health endpoint: it decides what the whole deployment can do
+          HEALTH=$(mktemp)
+          CODE=$(curl -sS -L -m 45 -o "$HEALTH" -w '%{http_code}' "$BASE/api/meta/health" || echo 000)
+          BODY=$(head -c 600 "$HEALTH" | tr -d '\r\n' | tr '|' '/')
+          if [ "$CODE" = "000" ]; then
+            echo "the deployment did not answer at all"; FAILED=1
+            add /api/meta/health "$CODE" "no answer at all"
+          elif ! jq -e . "$HEALTH" >/dev/null 2>&1; then
+            FAILED=1
+            add /api/meta/health "$CODE" "$(echo "$BODY" | head -c 200) - NOT JSON: a Vercel sign-in page means Deployment Protection, a plain 500 means the function threw"
+          else
+            OK=$(jq -r '.ok' "$HEALTH")
+            if [ "$OK" = "true" ]; then
+              add /api/meta/health "$CODE" "database UP - $(jq -c '.data | {connection, milliseconds, encrypted}' "$HEALTH")"
+            else
+              ERR=$(jq -r '.error.code' "$HEALTH")
+              case "$ERR" in
+                database_not_configured) add /api/meta/health "$CODE" "the API runs; missing $(jq -c '.error.details.missing' "$HEALTH")" ;;
+                database_unreachable)    add /api/meta/health "$CODE" "$(jq -r '.error.details.connection' "$HEALTH") did not answer" ;;
+                misconfigured_jwt_secret) add /api/meta/health "$CODE" "$ERR" ;;
+                *) add /api/meta/health "$CODE" "unexpected: $ERR"; FAILED=1 ;;
+              esac
+            fi
+          fi
+          echo "health: HTTP $CODE $(head -c 300 "$HEALTH")"
+
+          # 2. the addresses whose status code is fixed by the API itself
           probe() {
-            local path="$1"
-            local code body
-            body=$(mktemp)
-            code=$(curl -sS -L -m 45 -o "$body" -w '%{http_code}' "$BASE$path" || echo 000)
-            printf 'HTTP %s  %s\n' "$code" "$path"
-            head -c 600 "$body"; printf '\n---\n'
-            report+="| \`$path\` | $code | $(head -c 120 "$body" | tr -d '\r\n' | tr '|' '/') |"$'\n'
-            echo "$body" > "/tmp/probe$(echo "$path" | tr '/' '_')"
+            local path="$1" want="$2"
+            local code
+            code=$(curl -sS -L -m 45 -o /dev/null -w '%{http_code}' "$BASE$path" || echo 000)
+            if [ "$code" = "$want" ]; then
+              add "$path" "$code" "as documented"
+            else
+              add "$path" "$code" "expected $want"; FAILED=1
+            fi
+            echo "$path -> $code (expected $want)"
           }
-          probe /api/meta/health
-          probe /api/meta/summary
-          probe /api
-          probe /
-          probe /api/admin/users
-          probe /api/there-is-nothing-here
-          probe /api/auth/login
+          probe /api 200
+          probe /api/admin/users 401
+          probe /api/there-is-nothing-here 404
+
+          # 3. the root: the index of the API, or the built client page
+          ROOT=$(curl -sS -L -m 45 -o /tmp/root.body -w '%{http_code}' "$BASE/" || echo 000)
+          if [ "$ROOT" = "200" ]; then
+            if head -c 40 /tmp/root.body | grep -q '"ok"'; then
+              add / 200 "the index of the API"
+            elif grep -q '<div id="root"' /tmp/root.body 2>/dev/null; then
+              add / 200 "the built client page"
+            else
+              add / 200 "something else - see the run log"; FAILED=1
+            fi
+          else
+            add / "$ROOT" "expected 200"; FAILED=1
+          fi
+          echo "/ -> $ROOT"
+
+          # 4. a sign in attempt: refused, in the shape of the API
+          LOGIN=$(curl -sS -L -m 45 -H 'content-type: application/json' \
+            -d '{"email":"nobody@example.com","password":"neither-a-real-password"}' \
+            -o /dev/null -w '%{http_code}' "$BASE/api/auth/login" || echo 000)
+          case "$LOGIN" in
+            400|401|503) add /api/auth/login "$LOGIN" "refused in the shape of the API" ;;
+            *) add /api/auth/login "$LOGIN" "expected a refusal (400, 401 or 503)"; FAILED=1 ;;
+          esac
+          echo "/api/auth/login -> $LOGIN"
+
           {
             echo "### Deployed API probe"
             echo
             echo "deployment: $BASE"
+            echo "commit: $GITHUB_SHA"
             echo
-            echo "| request | status | answer |"
-            echo "| --- | --- | --- |"
-            printf '%s' "$report"
-          } >> "$GITHUB_STEP_SUMMARY"
+            printf '%s' "$TABLE"
+            if [ "$FAILED" != "0" ]; then
+              echo
+              echo "**At least one answer is not the documented one.**"
+            fi
+          } > /tmp/probe-summary.md
+          cat /tmp/probe-summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
 
-      - name: Check the answers
+      - name: Publish the result as a check run
+        if: always()
         env:
-          BASE: ${{ steps.find.outputs.base }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          BASE="${BASE%/}"
-          fail=0
-          say() { echo "$1"; }
-
-          health=$(curl -sS -m 45 "$BASE/api/meta/health" || true)
-          code=$(curl -sS -m 45 -o /dev/null -w '%{http_code}' "$BASE/api/meta/health" || echo 000)
-          if [ "$code" = "000" ]; then
-            say "the deployment did not answer at all"; exit 1
+          set -uo pipefail
+          FAILED="${{ steps.probe.outputs.failed }}"
+          BASE="${{ steps.probe.outputs.base }}"
+          CONCLUSION=$([ "$FAILED" = "0" ] && echo success || echo failure)
+          if [ ! -f /tmp/probe-summary.md ]; then
+            printf 'the probe did not run: no deployment of %s was found\n' "$GITHUB_SHA" > /tmp/probe-summary.md
+            CONCLUSION=failure
           fi
-          if ! echo "$health" | jq -e . >/dev/null 2>&1; then
-            say "FAIL /api/meta/health did not answer with JSON (status $code)."
-            say "     A 401 page means Deployment Protection is switched on for this deployment."
-            say "     A plain 500 FUNCTION_INVOCATION_FAILED means the function threw."
-            echo "$health" | head -c 400
-            exit 1
-          fi
-          if [ "$(echo "$health" | jq -r '.ok')" = "true" ]; then
-            say "OK   the API runs and SQL Server answered: $(echo "$health" | jq -c '.data | {database, connection, milliseconds}')"
-          else
-            err=$(echo "$health" | jq -r '.error.code')
-            case "$err" in
-              database_not_configured) say "OK   the API runs; the deployment has no DB_* variables yet: $(echo "$health" | jq -c '.error.details.missing')" ;;
-              database_unreachable)    say "OK   the API runs; SQL Server did not answer: $(echo "$health" | jq -r '.error.details.connection')" ;;
-              *) say "FAIL /api/meta/health answered $err"; fail=1 ;;
-            esac
-          fi
+          jq -n --arg name "deployed api probe" --arg sha "$GITHUB_SHA" \
+                --arg conclusion "$CONCLUSION" --arg base "$BASE" \
+                --rawfile summary /tmp/probe-summary.md \
+            '{name:$name, head_sha:$sha, status:"completed", conclusion:$conclusion,
+              output:{title:("deployed api probe " + $base), summary:$summary}}' > /tmp/check.json
+          gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" --input /tmp/check.json --jq '.html_url' \
+            || echo "the check run could not be published"
 
-          for spec in "/api:200" "/api/admin/users:401" "/api/there-is-nothing-here:404"; do
-            path="${spec%:*}"; want="${spec##*:}"
-            got=$(curl -sS -m 45 -o /dev/null -w '%{http_code}' "$BASE$path" || echo 000)
-            if [ "$got" = "$want" ]; then say "OK   $path -> $got"
-            else say "FAIL $path -> $got (expected $want)"; fail=1; fi
-          done
-
-          login=$(curl -sS -m 45 -H 'content-type: application/json' \
-            -d '{"email":"nobody@example.com","password":"neither-a-real-password"}' \
-            -o /dev/null -w '%{http_code}' "$BASE/api/auth/login" || echo 000)
-          case "$login" in
-            400|401|503) say "OK   /api/auth/login -> $login (a refusal in the shape of the API)" ;;
-            *) say "FAIL /api/auth/login -> $login"; fail=1 ;;
-          esac
-
-          exit "$fail"
+      - name: Fail the job when an answer is not the documented one
+        if: steps.probe.outputs.failed != '0'
+        run: |
+          echo "the deployment is not answering as docs/DEPLOYMENT.md describes"; exit 1
