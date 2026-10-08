@@ -4,6 +4,8 @@ A self-service student information system for Zewail City - the CSAI 202 (Introd
 Database Systems) project: analysis, design and implementation of a relational database, and a
 web application that uses it.
 
+**Live deployment:** https://database-delta-six.vercel.app
+
 The project is one application in two parts, plus the database it exists for:
 
 ```
@@ -26,8 +28,8 @@ docs/        the deployment guide (and the folder for the written deliverables)
 The rules that must not be broken live **inside** the database: `sp_RegisterStudent` (seven
 registration rules, one transaction, the locking hints that stop two students taking the last
 seat), `sp_DropEnrollment`, `sp_PublishGrades`, `sp_CreateFirstAdmin`, and
-`TR_Enrollment_SetGrade`, which writes the letter grade and the grade points the moment a score
-is written. The API therefore never reads a table directly and never builds SQL text out of
+`TR_Enrollment_SetGrade`, which writes the letter grade and the grade points the moment a score is
+written. The API therefore never reads a table directly and never builds SQL text out of
 what a user typed: it calls the procedures and binds parameters.
 
 ## Running it locally
@@ -75,8 +77,8 @@ commit, sends it real HTTP requests and publishes what each one answered as the 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In one paragraph: the API is a Vercel project
 with **Root Directory** `server`, framework **Other** (`server/vercel.json` sets
 `"framework": null`, which is what keeps Vercel from auto-detecting a Node server preset and
-failing), Node 24.x, and one serverless function (`server/api/index.js`) that every address of
-the domain is rewritten to. Its database comes entirely from environment variables -
+failing), Node 24.x, and one serverless function (`server/api/index.js`) that every address of the
+domain is rewritten to. Its database comes entirely from environment variables -
 `DB_SERVER`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_ENCRYPT`, `DB_TRUST_CERT` and
 `JWT_SECRET` - and when one of them is missing the health endpoint says so
 (`503 database_not_configured`) instead of guessing a server. `CLIENT_ORIGIN` and
